@@ -1,0 +1,74 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "cmake-configure-debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--preset",
+                "Debug"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "cmake-build-debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "--preset",
+                "Debug"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": [
+                "cmake-configure-debug"
+            ],
+            "dependsOrder": "sequence",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "flash-daplink",
+            "type": "shell",
+            "command": "C:/Program Files/OpenOCD-20260121-0.12.0/bin/openocd.exe",
+            "args": [
+                "-f",
+                "${workspaceFolder}/.vscode/openocd.cfg",
+                "-c",
+                "program build/Debug/YUOS.elf verify reset exit"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "build-and-flash-daplink",
+            "type": "shell",
+            "command": "C:/Program Files/OpenOCD-20260121-0.12.0/bin/openocd.exe",
+            "args": [
+                "-f",
+                "${workspaceFolder}/.vscode/openocd.cfg",
+                "-c",
+                "program build/Debug/YUOS.elf verify reset exit"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": [
+                "cmake-build-debug"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": []
+        }
+    ]
+}
