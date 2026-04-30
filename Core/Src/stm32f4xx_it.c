@@ -43,8 +43,8 @@
 /* USER CODE BEGIN PV */
 
 
-extern struct tcb taska_tcb, taskb_tcb;
-extern struct tcb *current_tcb;
+extern struct yuos_tcb taska_tcb, taskb_tcb;
+extern struct yuos_tcb *current_tcb;
 extern void scheduler(void);
 
 /* USER CODE END PV */

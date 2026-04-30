@@ -65,22 +65,34 @@ void Error_Handler(void);
 /* USER CODE END Private defines */
 
 /* YUOS kernel types ---------------------------------------------------------*/
+enum {
+    TASK_READY = 0,
+    TASK_RUNNING = 1,
+    TASK_BLOCKED = 2,
+};
+
 #define STACK_SIZE 128
 
-struct tcb {
-    uint32_t *sp;  /* 栈指针 —— 切换任务就是切换这个 */
+struct yuos_tcb {
+    uint32_t *sp;  //栈指针 —— 切换任务就是切换这个
+    uint32_t priority;// 任务优先级，数值越小优先级越高
+    uint32_t state;	// 任务状态：就绪、运行、阻塞
+	uint32_t delay_ticks;	// 任务剩余时间片（ticks）
 };
 
 /* Exported kernel variables -------------------------------------------------*/
 extern uint32_t taska_stack[STACK_SIZE];
 extern uint32_t taskb_stack[STACK_SIZE];
-extern struct tcb taska_tcb, taskb_tcb;
-extern struct tcb *current_tcb;
+extern struct yuos_tcb taska_tcb, taskb_tcb;
+extern struct yuos_tcb *current_tcb;
 
 /* Exported kernel functions -------------------------------------------------*/
-void task_create(struct tcb *tcb, uint32_t *stack, int stack_size, void (*task_func)(void));
+void task_create(struct yuos_tcb *tcb, uint32_t *stack, int stack_size,uint32_t priority, void (*task_func)(void));
 void scheduler(void);
 void start_first_task(void);
+
+uint32_t enter_critical(void);
+void exit_critical(uint32_t primask);
 
 #ifdef __cplusplus
 }

@@ -60,8 +60,22 @@ uint32_t taska_stack[STACK_SIZE];
 uint32_t taskb_stack[STACK_SIZE];
 
 /* 任务控制块 */
-struct tcb taska_tcb, taskb_tcb;
-struct tcb *current_tcb;
+struct yuos_tcb taska_tcb, taskb_tcb;
+struct yuos_tcb *current_tcb;
+
+
+uint32_t enter_critical(void)
+{
+	uint32_t primask = __get_PRIMASK();  // 读取当前中断状态
+	__disable_irq();
+	return primask;                       // 返回旧状态，交给调用者保管
+}
+
+void exit_critical(uint32_t primask)
+{
+	__set_PRIMASK(primask);                 // 恢复到旧状态
+}
+
 
 /*
  * task_create — 初始化任务栈（PendSV 异常帧布局）
@@ -70,7 +84,7 @@ struct tcb *current_tcb;
  *   xPSR, PC, LR, R12, R3, R2, R1, R0  ← 硬件自动压栈 (8 words)
  *   R11, R10, R9, R8, R7, R6, R5, R4    ← PendSV 手动压栈 (8 words)
  */
-void task_create(struct tcb *tcb, uint32_t *stack, int stack_size, void (*task_func)(void))
+void task_create(struct yuos_tcb *tcb, uint32_t *stack, int stack_size,uint32_t priority, void (*task_func)(void))
 {
     uint32_t *sp = &stack[stack_size - 1];
 
@@ -85,19 +99,37 @@ void task_create(struct tcb *tcb, uint32_t *stack, int stack_size, void (*task_f
     *(--sp) = 0x00000000;           /* R0  */
 
     /* R4-R11 —— PendSV 手动弹出 */
-    for (int i = 11; i >= 4; i--) {
+    for (int i = 11; i >= 4; i--) 
+    {
         *(--sp) = i;
     }
 
     tcb->sp = sp;
+    tcb->priority = priority;
+    tcb->state = TASK_READY;
+    tcb->delay_ticks = 0;
 }
 
 /*
- * scheduler — 轮询调度（实验3简化版：A→B→A→B）
+ * scheduler — 优先级调度
  */
 void scheduler(void)
 {
-    current_tcb = (current_tcb == &taska_tcb) ? &taskb_tcb : &taska_tcb;
+	struct yuos_tcb *next = current_tcb;  // 默认切换到当前任务（如果没有更高优先级的就绪任务）
+    struct yuos_tcb *tasks[] = {&taska_tcb, &taskb_tcb};
+	for(int i = 0; i < sizeof(tasks)/sizeof(tasks[0]); i++) 
+	{
+		if(tasks[i]->delay_ticks == 0)
+		{
+			if(next->delay_ticks >0 || tasks[i]->priority < next->priority) 
+			{
+				next = tasks[i];
+			}
+		}
+	}
+	uint32_t primask = enter_critical();
+	current_tcb = next;
+	exit_critical(primask);
 }
 
 /*
@@ -171,8 +203,8 @@ int main(void)
 
   /* USER CODE END 2 */
 
-  task_create(&taska_tcb, taska_stack, STACK_SIZE, taska);
-  task_create(&taskb_tcb, taskb_stack, STACK_SIZE, taskb);
+  task_create(&taska_tcb, taska_stack, STACK_SIZE,1, taska);
+  task_create(&taskb_tcb, taskb_stack, STACK_SIZE,2, taskb);
 
   /*
    * PendSV 必须设为最低优先级 (15)。
