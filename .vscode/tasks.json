@@ -39,7 +39,7 @@
         {
             "label": "flash-daplink",
             "type": "shell",
-            "command": "C:/Program Files/OpenOCD-20260121-0.12.0/bin/openocd.exe",
+            "command": "openocd",
             "args": [
                 "-f",
                 "${workspaceFolder}/.vscode/openocd.cfg",
@@ -54,7 +54,7 @@
         {
             "label": "build-and-flash-daplink",
             "type": "shell",
-            "command": "C:/Program Files/OpenOCD-20260121-0.12.0/bin/openocd.exe",
+            "command": "openocd",
             "args": [
                 "-f",
                 "${workspaceFolder}/.vscode/openocd.cfg",

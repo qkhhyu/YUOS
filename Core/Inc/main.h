@@ -64,6 +64,24 @@ void Error_Handler(void);
 
 /* USER CODE END Private defines */
 
+/* YUOS kernel types ---------------------------------------------------------*/
+#define STACK_SIZE 128
+
+struct tcb {
+    uint32_t *sp;  /* 栈指针 —— 切换任务就是切换这个 */
+};
+
+/* Exported kernel variables -------------------------------------------------*/
+extern uint32_t taska_stack[STACK_SIZE];
+extern uint32_t taskb_stack[STACK_SIZE];
+extern struct tcb taska_tcb, taskb_tcb;
+extern struct tcb *current_tcb;
+
+/* Exported kernel functions -------------------------------------------------*/
+void task_create(struct tcb *tcb, uint32_t *stack, int stack_size, void (*task_func)(void));
+void scheduler(void);
+void start_first_task(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -242,50 +242,157 @@ taskB 调用 Switch()
 
 ### 实验 3：SysTick 中断（抢占式调度）
 
-**状态**：🔲 待开始
+**状态**：✅ 已完成（2026-04-30）
 
 **目标**：不管当前任务愿不愿意，时间一到硬件强行打断切换。
 
-实现要点：
-- 配置 SysTick 每 1ms 触发一次中断
-- 在 ISR 里调用切换逻辑
-- SysTick ISR 中判断 tick_count，达到阈值时标记需要切换，触发 PendSV
+#### 实现要点
 
-参考核心代码：
+**整体流程**：
 
-```c
-void SysTick_Handler(void) {
-    static int tick_count = 0;
-    tick_count++;
-    if (tick_count >= 500) {  // 每500ms切换一次
-        tick_count = 0;
-        current_tcb = (current_tcb == &taskA_tcb) ? &taskB_tcb : &taskA_tcb;
-        SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  // 触发PendSV
-    }
-}
+```
+SysTick (每1ms) → 计数到500 → 触发 PendSV
+                                  ↓
+PendSV: 保存当前任务 → 调用 scheduler() → 恢复新任务
+                                  ↓
+                          bx lr → 硬件自动弹栈 → CPU 开始跑新任务
 ```
 
-PendSV 汇编骨架：
+**SysTick_Handler** (`Core/Src/stm32f4xx_it.c`)：
+- 保留 HAL_IncTick() 供 HAL 库使用
+- 每 1ms tick_count++，到 500（~500ms）触发 PendSV
+- 不直接做切换——只在 SysTick 里"通知" PendSV
+
+**PendSV_Handler** (`Core/Src/stm32f4xx_it.c`)：
+```asm
+push {r4-r11}         ; 手动保存 R4-R11（硬件已自动保存 R0-R3,R12,LR,PC,xPSR）
+str sp, [current_tcb] ; 当前 SP → 旧任务 TCB
+bl scheduler          ; C 函数，改变 current_tcb 指向新任务
+ldr sp, [current_tcb] ; 新任务 SP ← 新任务 TCB
+pop {r4-r11}          ; 恢复 R4-R11
+bx lr                 ; 异常返回，硬件弹出 R0-R3,PC 等 → 无缝跳转！
+```
+
+**PendSV 切换全过程**（假设 taskA 正在跑，SysTick 触发切换）：
+
+```
+时间轴
+─────→
+
+① taskA 在 Thread 模式正常执行
+   SP → taska_stack  (当前在 taskA 的栈上)
+
+② SysTick 计数到 500，置位 PendSV 挂起位
+   PendSV 不立即执行——它优先级最低(15)，等所有高优先级中断先处理完
+
+③ PendSV 开始响应
+   硬件自动压栈到 taska_stack（8 words）：
+   ┌──────────┐
+   │  xPSR    │ ← 硬件自动保存
+   │  PC      │   （taskA 被打算时正在执行的指令地址）
+   │  LR      │
+   │  R12     │
+   │  R3      │
+   │  R2      │
+   │  R1      │
+   │  R0      │
+   │  R11     │ ← push {r4-r11} 手动保存
+   │  R10     │
+   │  R9      │
+   │  R8      │
+   │  R7      │
+   │  R6      │
+   │  R5      │
+   │  R4      │
+   └──────────┘
+   SP 现在指向 R4（栈底）
+
+④ str sp, [r1]  →  taska_tcb.sp = SP
+   ↑ 把 taskA 的"断点位置"写入它的身份证（TCB）
+
+⑤ bl scheduler  →  current_tcb = &taskb_tcb
+   调度器把全局指针指向 taskB 的 TCB
+
+⑥ ldr sp, [r1]  →  SP = taskb_tcb.sp
+   ↑ SP 从 taska_stack 切到 taskb_stack —— 切换发生！
+   ┌──────────┐
+   │  xPSR    │
+   │  PC      │ ← taskB 上次被打算时保存的断点
+   │  LR      │
+   │  ...     │
+   │  R5      │
+   │  R4      │
+   └──────────┘
+   SP 现在指向 taskB 的栈
+
+⑦ pop {r4-r11}  →  CPU 的 R4~R11 恢复为 taskB 上次的值
+
+⑧ bx lr  →  硬件自动弹栈：R0~R3, R12, LR, PC, xPSR
+             PC 变成 taskB 的断点 → CPU 无缝继续跑 taskB
+```
+
+**核心就两个赋值**：
+- `str sp, [r1]` — 当前 SP → 旧任务 TCB.sp（保存断点）
+- `ldr sp, [r1]` — 新任务 TCB.sp → SP 寄存器（加载断点）
+
+**SP 寄存器一变，后续所有 push/pop/bx 全作用在新任务的栈上——任务就切过去了。**
+
+**SVC_Handler** (`Core/Src/stm32f4xx_it.c`)：
+- `start_first_task()` 触发 `SVC 0` 进入 Handler 模式
+- SVC 里加载第一个任务的 SP → pop R4-R11 → bx lr → 任务启动
+- 不在 Thread 模式下直接 bx lr（Thread 模式的 bx lr 不是异常返回）
+
+**task_create 栈布局变化**（`Core/Src/main.c`）：
+
+与实验 2 不同，现在的栈布局要匹配 PendSV 的异常帧格式：
+
+```
+高地址
+  xPSR = 0x01000000  ← 硬件异常返回帧 (8 words)
+  PC   = task_func
+  LR   = 0
+  R12  = 0
+  R3   = 0
+  R2   = 0
+  R1   = 0
+  R0   = 0
+  R11  = 11           ← PendSV 手动帧 (8 words)
+  ...
+  R4   = 4
+低地址 ← SP
+```
+
+**优先级配置**：
+- NVIC 优先级分组 4（全抢占），与实验 1 一致
+- SysTick 优先级：15（HAL_Init 设置）
+- PendSV 优先级：15（手动设置 `NVIC_SetPriority(PendSV_IRQn, 15)`）
+- 两者同优先级 → SysTick 不会抢占 PendSV，反之亦然
+
+#### 关键理解
+
+- **抢占 vs 合作**：实验 2 的任务必须主动调用 Switch() 让出 CPU；实验 3 的任务只管死循环，SysTick 硬件定时打断，任务完全无感知
+- **PendSV 的意义**：如果直接在 SysTick ISR 里做切换，会阻塞其他同/低优先级中断。PendSV 是最低优先级，等所有 ISR 处理完再切换——最安全优雅
+- **异常返回机制**：bx lr 在 Handler 模式下识别 EXC_RETURN 值，通知硬件自动弹出 R0-R3,R12,LR,PC,xPSR——这就是为什么 PendSV 只需要手动管理 R4-R11
+- **SVC 启动**：main() 在 Thread 模式，不能直接加载任务栈 + bx lr（Thread 模式的 LR 不是 EXC_RETURN）。SVC 进入 Handler 模式后，bx lr 才有异常返回的语义
+
+#### 观察现象
+
+同一颗 LED 仍然呈现快闪/慢闪交替——但这次任务代码里没有 Switch() 调用，切换完全由硬件 SysTick 定时驱动。这就是"抢占"。
+
+#### 遇到的 Bug
+
+| Bug | 症状 | 根因 |
+|-----|------|------|
+| `bl scheduler` 覆盖 LR | LED 亮一下→全灭→系统挂死 | `bl` 把返回地址写入 LR，覆盖了异常入口时的 EXC_RETURN 值（`0xFFFFFFF9`）。`bx lr` 时 LR 不再是异常返回标记，不会做硬件弹栈，CPU 跳到非法地址进入 HardFault |
+| `ldr r2, [lr]` 尝试暂存 LR | HardFault | LR = `0xFFFFFFF9` 是一个特殊编码值，不是合法内存地址。`ldr` 试图从该地址读数据，CPU 直接 HardFault |
+| 用 R2 暂存 LR | 编译看似正确，运行时破坏 | R0-R3 是 caller-saved 寄存器，`bl scheduler` 执行的 C 代码可随意修改它们。`scheduler()` 返回后 R2 大概率已被污染 |
+
+**最终修复**（`PendSV_Handler`）：
 
 ```asm
-PendSV_Handler:
-    // 1. 硬件已自动压栈 R0-R3,R12,LR,PC,xPSR
-    // 2. 手动压栈 R4-R11
-    push {r4-r11}
-    // 3. 保存当前任务 SP → TCB
-    ldr r0, =current_tcb
-    ldr r1, [r0]
-    str sp, [r1]
-    // 4. 调用 C 调度函数
-    bl scheduler
-    // 5. 加载新任务 SP ← TCB   ★ 关键！切换栈指针
-    ldr r0, =current_tcb
-    ldr r1, [r0]
-    ldr sp, [r1]
-    // 6. 恢复新任务 R4-R11
-    pop {r4-r11}
-    // 7. 异常返回，硬件自动弹出 R0-R3,R12,LR,PC,xPSR
-    bx lr
+mov r4, lr              ; 借 R4 暂存 EXC_RETURN（R4 是 callee-saved，C 函数保证不破坏）
+bl scheduler
+mov lr, r4              ; 归还 EXC_RETURN
 ```
 
 **里程碑**：RTOS 的灵魂——"抢占"诞生
@@ -416,4 +523,4 @@ void TaskB(void) {   // 慢闪：~800ms 周期
 
 ---
 
-*最后更新：2026-04-29（实验2完成）*
+*最后更新：2026-04-30（实验3完成）*

@@ -42,6 +42,11 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN PV */
 
+
+extern struct tcb taska_tcb, taskb_tcb;
+extern struct tcb *current_tcb;
+extern void scheduler(void);
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -140,15 +145,20 @@ void UsageFault_Handler(void)
 
 /**
   * @brief This function handles System service call via SWI instruction.
+  *
+  * YUOS: 启动第一个任务。start_first_task() 触发 SVC 进入 Handler 模式。
+  * 加载 current_tcb 指向的任务栈，弹出 R4-R11，bx lr 做异常返回，
+  * 硬件自动弹出 R0-R3,R12,LR,PC,xPSR —— CPU 开始执行第一个任务。
   */
-void SVC_Handler(void)
+__attribute__((naked)) void SVC_Handler(void)
 {
-  /* USER CODE BEGIN SVCall_IRQn 0 */
-
-  /* USER CODE END SVCall_IRQn 0 */
-  /* USER CODE BEGIN SVCall_IRQn 1 */
-
-  /* USER CODE END SVCall_IRQn 1 */
+    __asm volatile (
+        "ldr r0, =current_tcb    \n"
+        "ldr r1, [r0]            \n"
+        "ldr sp, [r1]            \n"  /* SP = 第一个任务的栈指针 */
+        "pop {r4-r11}            \n"  /* 恢复 R4-R11 */
+        "bx lr                   \n"  /* 异常返回 → 硬件弹出 R0-R3,PC 等 → 任务启动 */
+    );
 }
 
 /**
@@ -166,15 +176,32 @@ void DebugMon_Handler(void)
 
 /**
   * @brief This function handles Pendable request for system service.
+  *
+  * YUOS: 上下文切换核心。
+  *  1. 硬件已自动压栈 R0-R3,R12,LR,PC,xPSR (8 words)
+  *  2. 手动压栈 R4-R11 (8 words)
+  *  3. 保存 SP → current_tcb->sp
+  *  4. 调用 C 调度器选下一任务
+  *  5. 加载新任务 SP ← current_tcb->sp
+  *  6. 弹出 R4-R11
+  *  7. bx lr → 硬件自动弹出异常帧 → CPU 无缝执行新任务
   */
-void PendSV_Handler(void)
+__attribute__((naked)) void PendSV_Handler(void)
 {
-  /* USER CODE BEGIN PendSV_IRQn 0 */
-
-  /* USER CODE END PendSV_IRQn 0 */
-  /* USER CODE BEGIN PendSV_IRQn 1 */
-
-  /* USER CODE END PendSV_IRQn 1 */
+    __asm volatile (
+        "push {r4-r11}           \n"  /* 步骤2: 手动保存 R4-R11 */
+        "ldr r0, =current_tcb    \n"
+        "ldr r1, [r0]            \n"
+        "str sp, [r1]            \n"  /* 步骤3: SP → current_tcb->sp */
+        "mov r4, lr              \n"
+        "bl scheduler            \n"  /* 步骤4: 调用 C 调度器切换 current_tcb */
+        "mov lr, r4              \n"  /* 恢复 lr，防止 scheduler 修改它 */
+        "ldr r0, =current_tcb    \n"
+        "ldr r1, [r0]            \n"
+        "ldr sp, [r1]            \n"  /* 步骤5: 新任务 SP */
+        "pop {r4-r11}            \n"  /* 步骤6: 恢复 R4-R11 */
+        "bx lr                   \n"  /* 步骤7: 异常返回 */
+    );
 }
 
 /**
@@ -187,6 +214,19 @@ void SysTick_Handler(void)
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
+
+  /*
+   * YUOS: 每 500ms 触发一次 PendSV 上下文切换。
+   * SysTick 1ms tick，计数到 500 即 ~500ms。
+   */
+  {
+      static uint32_t tick_count = 0;
+      tick_count++;
+      if (tick_count >= 500) {
+          tick_count = 0;
+          SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  /* 触发 PendSV */
+      }
+  }
 
   /* USER CODE END SysTick_IRQn 1 */
 }

@@ -55,61 +55,66 @@ static void MX_GPIO_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-/* USER CODE END 0 */
 
-// 两个任务的栈空间
-#define STACK_SIZE 128
 uint32_t taska_stack[STACK_SIZE];
 uint32_t taskb_stack[STACK_SIZE];
 
-// 任务控制块TCB
-struct tcb {
-    uint32_t *sp;  // 栈指针，这是最关键的
-};
+/* 任务控制块 */
 struct tcb taska_tcb, taskb_tcb;
-
-// 指向当前运行任务的TCB
 struct tcb *current_tcb;
 
+/*
+ * task_create — 初始化任务栈（PendSV 异常帧布局）
+ *
+ * 栈从高地址到低地址：
+ *   xPSR, PC, LR, R12, R3, R2, R1, R0  ← 硬件自动压栈 (8 words)
+ *   R11, R10, R9, R8, R7, R6, R5, R4    ← PendSV 手动压栈 (8 words)
+ */
 void task_create(struct tcb *tcb, uint32_t *stack, int stack_size, void (*task_func)(void))
 {
     uint32_t *sp = &stack[stack_size - 1];
 
-    // 栈布局（高地址→低地址）：PC, R11, R10, ..., R4
-    // Switch() 中通过 pop {r4-r11, pc} 恢复
-    *(--sp) = (uint32_t)task_func;  // PC —— 首次运行时从这里开始
+    /* 硬件异常返回帧 —— bx lr 时硬件自动弹出 */
+    *(--sp) = 0x01000000;           /* xPSR: 必须置 Thumb 位 */
+    *(--sp) = (uint32_t)task_func;  /* PC:  首次运行入口 */
+    *(--sp) = 0x00000000;           /* LR */
+    *(--sp) = 0x00000000;           /* R12 */
+    *(--sp) = 0x00000000;           /* R3  */
+    *(--sp) = 0x00000000;           /* R2  */
+    *(--sp) = 0x00000000;           /* R1  */
+    *(--sp) = 0x00000000;           /* R0  */
+
+    /* R4-R11 —— PendSV 手动弹出 */
     for (int i = 11; i >= 4; i--) {
-        *(--sp) = i;                 // R11~R4 的初始值
+        *(--sp) = i;
     }
 
     tcb->sp = sp;
 }
 
-__attribute__((naked)) void Switch(void)
+/*
+ * scheduler — 轮询调度（实验3简化版：A→B→A→B）
+ */
+void scheduler(void)
+{
+    current_tcb = (current_tcb == &taska_tcb) ? &taskb_tcb : &taska_tcb;
+}
+
+/*
+ * start_first_task — 通过 SVC 进入 Handler 模式，跳转到第一个任务
+ * 不能在 Thread 模式下直接加载任务栈并 bx lr
+ */
+__attribute__((naked)) void start_first_task(void)
 {
     __asm volatile (
-        "push {r4-r11, lr}       \n"  // 手动保存 R4-R11 和返回地址
-        "ldr r0, =current_tcb    \n"
-        "ldr r1, [r0]            \n"
-        "str sp, [r1]            \n"  // 当前 SP → current_tcb->sp
-
-        // 轮流切换：taskA ↔ taskB
-        "ldr r2, =taska_tcb      \n"
-        "cmp r1, r2              \n"
-        "beq to_taskB            \n"
-        "ldr r0, =taska_tcb      \n"
-        "b restore               \n"
-        "to_taskB:               \n"
-        "ldr r0, =taskb_tcb      \n"
-        "restore:                \n"
-        "ldr r1, =current_tcb    \n"
-        "str r0, [r1]            \n"  // current_tcb = 新任务
-        "ldr sp, [r0]            \n"  // SP = 新任务栈指针
-
-        "pop {r4-r11, pc}        \n"  // 恢复 R4-R11，PC 直接跳转到新任务
+        "svc 0    \n"  /* 触发 SVC 异常，进入 Handler 模式 */
+        "bx lr    \n"
     );
 }
 
+/* USER CODE END 0 */
+
+/* taska: 快闪 ~200ms 周期 — 不再主动让出 CPU，由 SysTick 抢占 */
 void taska(void)
 {
 	while(1)
@@ -118,10 +123,10 @@ void taska(void)
 		for (volatile int i = 0; i < 500000; i++);
 		HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
 		for (volatile int i = 0; i < 500000; i++);
-		Switch();
 	}
 }
 
+/* taskb: 慢闪 ~800ms 周期 */
 void taskb(void)
 {
 	while(1)
@@ -130,7 +135,6 @@ void taskb(void)
 		for (volatile int i = 0; i < 2000000; i++);
 		HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
 		for (volatile int i = 0; i < 2000000; i++);
-		Switch();
 	}
 }
 
@@ -166,24 +170,24 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
-	task_create(&taska_tcb, taska_stack, STACK_SIZE, taska);
-	task_create(&taskb_tcb, taskb_stack, STACK_SIZE, taskb);
-	// 设置当前任务为任务A（首次启动会“恢复”到taska）
-	current_tcb = &taska_tcb;// 假设一开始是 taska 在跑
-	// 直接启动 Taska（裸机调用）
-	taska();
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
+
+  task_create(&taska_tcb, taska_stack, STACK_SIZE, taska);
+  task_create(&taskb_tcb, taskb_stack, STACK_SIZE, taskb);
+
+  /*
+   * PendSV 必须设为最低优先级 (15)。
+   * 这样 PendSV 不会抢占 SysTick，保证上下文切换在 ISR 结束后才执行。
+   */
+  NVIC_SetPriority(PendSV_IRQn, 15);
+
+  current_tcb = &taska_tcb;
+  start_first_task();  /* SVC → Handler 模式 → 跳转到 taska */
+
+  /* 不会执行到这里 */
   while (1)
   {
-    
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
   }
-  /* USER CODE END 3 */
 }
-
 /**
   * @brief System Clock Configuration
   * @retval None
