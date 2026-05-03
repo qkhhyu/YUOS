@@ -66,12 +66,14 @@ void Error_Handler(void);
 
 /* YUOS kernel types ---------------------------------------------------------*/
 enum {
-    TASK_READY = 0,
-    TASK_RUNNING = 1,
-    TASK_BLOCKED = 2,
+    TASK_UNUSED     = 0,
+    TASK_READY      = 1,
+    TASK_RUNNING    = 2,
+    TASK_BLOCKED    = 3,
 };
 
 #define STACK_SIZE 128
+#define YUOS_MAX_TASKS 4
 
 struct yuos_tcb {
     uint32_t *sp;  //栈指针 —— 切换任务就是切换这个
@@ -81,18 +83,21 @@ struct yuos_tcb {
 };
 
 /* Exported kernel variables -------------------------------------------------*/
-extern uint32_t taska_stack[STACK_SIZE];
-extern uint32_t taskb_stack[STACK_SIZE];
-extern struct yuos_tcb taska_tcb, taskb_tcb;
+// extern uint32_t taska_stack[STACK_SIZE];
+// extern uint32_t taskb_stack[STACK_SIZE];
+extern uint32_t stack_pool[YUOS_MAX_TASKS][STACK_SIZE];
+// extern struct yuos_tcb taska_tcb, taskb_tcb;
+extern struct yuos_tcb tcb_pool[YUOS_MAX_TASKS];
 extern struct yuos_tcb *current_tcb;
 
 /* Exported kernel functions -------------------------------------------------*/
-void task_create(struct yuos_tcb *tcb, uint32_t *stack, int stack_size,uint32_t priority, void (*task_func)(void));
+struct yuos_tcb *task_create(int stack_size,uint32_t priority, void (*task_func)(void));
 void scheduler(void);
 void start_first_task(void);
 
 uint32_t enter_critical(void);
 void exit_critical(uint32_t primask);
+void sleep(uint32_t ticks);
 
 #ifdef __cplusplus
 }

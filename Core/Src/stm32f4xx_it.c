@@ -43,8 +43,8 @@
 /* USER CODE BEGIN PV */
 
 
-extern struct yuos_tcb taska_tcb, taskb_tcb;
-extern struct yuos_tcb *current_tcb;
+// extern struct yuos_tcb taska_tcb, taskb_tcb;
+// extern struct yuos_tcb *current_tcb;
 extern void scheduler(void);
 
 /* USER CODE END PV */
@@ -219,14 +219,30 @@ void SysTick_Handler(void)
    * YUOS: 每 500ms 触发一次 PendSV 上下文切换。
    * SysTick 1ms tick，计数到 500 即 ~500ms。
    */
-  {
-      static uint32_t tick_count = 0;
-      tick_count++;
-      if (tick_count >= 500) {
-          tick_count = 0;
-          SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  /* 触发 PendSV */
-      }
-  }
+  // {
+  //     static uint32_t tick_count = 0;
+  //     tick_count++;
+  //     if (tick_count >= 500) {
+  //         tick_count = 0;
+  //         SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  /* 触发 PendSV */
+  //     }
+  // }
+    // struct yuos_tcb *tasks[] = {&taska_tcb, &taskb_tcb};
+    for(uint32_t i = 0; i < sizeof(tcb_pool)/sizeof(tcb_pool[0]); i++) 
+	{
+		if (tcb_pool[i].state == TASK_BLOCKED) 
+		{
+			uint32_t primask = enter_critical();
+			tcb_pool[i].delay_ticks--;
+			if(tcb_pool[i].delay_ticks ==0)
+			{
+				tcb_pool[i].state = TASK_READY;
+				SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
+			}
+			exit_critical(primask);
+		}
+	}
+
 
   /* USER CODE END SysTick_IRQn 1 */
 }

@@ -56,11 +56,18 @@ static void MX_GPIO_Init(void);
 /* USER CODE BEGIN 0 */
 
 
-uint32_t taska_stack[STACK_SIZE];
-uint32_t taskb_stack[STACK_SIZE];
+// uint32_t taska_stack[STACK_SIZE];
+// uint32_t taskb_stack[STACK_SIZE];
+
+
+
 
 /* 任务控制块 */
-struct yuos_tcb taska_tcb, taskb_tcb;
+
+struct yuos_tcb tcb_pool[YUOS_MAX_TASKS];
+uint32_t stack_pool[YUOS_MAX_TASKS][STACK_SIZE];
+
+struct yuos_tcb *taska_tcb, *taskb_tcb;
 struct yuos_tcb *current_tcb;
 
 
@@ -76,6 +83,41 @@ void exit_critical(uint32_t primask)
 	__set_PRIMASK(primask);                 // 恢复到旧状态
 }
 
+/*
+ * scheduler — 优先级调度
+ */
+void scheduler(void)
+{
+	struct yuos_tcb *next = current_tcb;  // 默认切换到当前任务（如果没有更高优先级的就绪任务）
+    // struct yuos_tcb *tasks[] = {&taska_tcb, &taskb_tcb};
+	for(int i = 0; i < sizeof(tcb_pool)/sizeof(tcb_pool[0]); i++) 
+	{
+		if(tcb_pool[i].state == TASK_UNUSED) 
+		{
+			continue;
+		}
+		if(tcb_pool[i].delay_ticks == 0)
+		{
+			if(next->delay_ticks >0 || tcb_pool[i].priority < next->priority) 
+			{
+				next = &tcb_pool[i];
+			}
+		}
+	}
+	uint32_t primask = enter_critical();
+	current_tcb = next;
+	current_tcb->state = TASK_RUNNING;
+	exit_critical(primask);
+}
+
+void sleep(uint32_t ticks)
+{
+	uint32_t primask = enter_critical();
+	current_tcb->delay_ticks = ticks;
+	current_tcb->state = TASK_BLOCKED;
+	SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  // 切换到其他任务
+	exit_critical(primask);
+}
 
 /*
  * task_create — 初始化任务栈（PendSV 异常帧布局）
@@ -84,10 +126,26 @@ void exit_critical(uint32_t primask)
  *   xPSR, PC, LR, R12, R3, R2, R1, R0  ← 硬件自动压栈 (8 words)
  *   R11, R10, R9, R8, R7, R6, R5, R4    ← PendSV 手动压栈 (8 words)
  */
-void task_create(struct yuos_tcb *tcb, uint32_t *stack, int stack_size,uint32_t priority, void (*task_func)(void))
+struct yuos_tcb *task_create(int stack_size,uint32_t priority, void (*task_func)(void))
 {
-    uint32_t *sp = &stack[stack_size - 1];
-
+    // uint32_t *sp = &stack[stack_size - 1];
+	struct yuos_tcb *tcb = NULL;
+	uint32_t *sp = NULL;
+	int slot = -1;
+	for(uint32_t i=0;i<YUOS_MAX_TASKS;i++)
+	{
+		if(tcb_pool[i].state == TASK_UNUSED)
+		{
+			tcb = &tcb_pool[i];
+			slot = i;
+			break;
+		}
+	}
+	if(tcb==NULL)
+	{
+		return NULL; // 没有空闲的 TCB
+	}
+	sp = &stack_pool[slot][stack_size - 1];
     /* 硬件异常返回帧 —— bx lr 时硬件自动弹出 */
     *(--sp) = 0x01000000;           /* xPSR: 必须置 Thumb 位 */
     *(--sp) = (uint32_t)task_func;  /* PC:  首次运行入口 */
@@ -108,29 +166,10 @@ void task_create(struct yuos_tcb *tcb, uint32_t *stack, int stack_size,uint32_t 
     tcb->priority = priority;
     tcb->state = TASK_READY;
     tcb->delay_ticks = 0;
+	return tcb;
 }
 
-/*
- * scheduler — 优先级调度
- */
-void scheduler(void)
-{
-	struct yuos_tcb *next = current_tcb;  // 默认切换到当前任务（如果没有更高优先级的就绪任务）
-    struct yuos_tcb *tasks[] = {&taska_tcb, &taskb_tcb};
-	for(int i = 0; i < sizeof(tasks)/sizeof(tasks[0]); i++) 
-	{
-		if(tasks[i]->delay_ticks == 0)
-		{
-			if(next->delay_ticks >0 || tasks[i]->priority < next->priority) 
-			{
-				next = tasks[i];
-			}
-		}
-	}
-	uint32_t primask = enter_critical();
-	current_tcb = next;
-	exit_critical(primask);
-}
+
 
 /*
  * start_first_task — 通过 SVC 进入 Handler 模式，跳转到第一个任务
@@ -146,25 +185,30 @@ __attribute__((naked)) void start_first_task(void)
 
 /* USER CODE END 0 */
 
-/* taska: 快闪 ~200ms 周期 — 不再主动让出 CPU，由 SysTick 抢占 */
+
 void taska(void)
 {
 	while(1)
 	{
-		HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_SET);
-		for (volatile int i = 0; i < 500000; i++);
-		HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
-		for (volatile int i = 0; i < 500000; i++);
+		for(int i=0;i<5;i++)
+		{
+			HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_SET);
+			for (volatile int i = 0; i < 500000; i++);   // 慢闪忙等
+			HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
+			for (volatile int i = 0; i < 500000; i++);
+		}
+		sleep(5000);
+		
 	}
 }
 
-/* taskb: 慢闪 ~800ms 周期 */
+
 void taskb(void)
 {
 	while(1)
 	{
 		HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_SET);
-		for (volatile int i = 0; i < 2000000; i++);
+		for (volatile int i = 0; i < 2000000; i++);   // 慢闪忙等
 		HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
 		for (volatile int i = 0; i < 2000000; i++);
 	}
@@ -203,8 +247,8 @@ int main(void)
 
   /* USER CODE END 2 */
 
-  task_create(&taska_tcb, taska_stack, STACK_SIZE,1, taska);
-  task_create(&taskb_tcb, taskb_stack, STACK_SIZE,2, taskb);
+  taska_tcb = task_create(STACK_SIZE,1, taska);
+  taskb_tcb = task_create(STACK_SIZE,2, taskb);
 
   /*
    * PendSV 必须设为最低优先级 (15)。
@@ -212,7 +256,7 @@ int main(void)
    */
   NVIC_SetPriority(PendSV_IRQn, 15);
 
-  current_tcb = &taska_tcb;
+  current_tcb = taska_tcb;
   start_first_task();  /* SVC → Handler 模式 → 跳转到 taska */
 
   /* 不会执行到这里 */
