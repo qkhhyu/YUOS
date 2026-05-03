@@ -96,15 +96,19 @@ void scheduler(void)
 		{
 			continue;
 		}
-		if(tcb_pool[i].delay_ticks == 0)
+		if(tcb_pool[i].state == TASK_READY)
 		{
-			if(next->delay_ticks >0 || tcb_pool[i].priority < next->priority) 
+			if(next->state != TASK_READY || tcb_pool[i].priority < next->priority) 
 			{
 				next = &tcb_pool[i];
 			}
 		}
 	}
 	uint32_t primask = enter_critical();
+	if (current_tcb != next && current_tcb->state == TASK_RUNNING)
+	{
+		current_tcb->state = TASK_READY;
+	}
 	current_tcb = next;
 	current_tcb->state = TASK_RUNNING;
 	exit_critical(primask);
