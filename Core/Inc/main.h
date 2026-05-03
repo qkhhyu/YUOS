@@ -72,8 +72,15 @@ enum {
     TASK_BLOCKED    = 3,
 };
 
+#define YUOS_MAX_PRIORITIES  255u
+#define YUOS_PRIO_HIGHEST   0u
+#define YUOS_PRIO_IDLE      (YUOS_MAX_PRIORITIES - 1u)
+
+#define YUOS_MAX_TASKS 8    //最大任务数
+
+
 #define STACK_SIZE 128
-#define YUOS_MAX_TASKS 4
+
 
 struct yuos_tcb {
     uint32_t *sp;  //栈指针 —— 切换任务就是切换这个
@@ -89,7 +96,7 @@ extern uint32_t stack_pool[YUOS_MAX_TASKS][STACK_SIZE];
 // extern struct yuos_tcb taska_tcb, taskb_tcb;
 extern struct yuos_tcb tcb_pool[YUOS_MAX_TASKS];
 extern struct yuos_tcb *current_tcb;
-
+extern struct yuos_tcb *yuos_idle_tcb;
 /* Exported kernel functions -------------------------------------------------*/
 struct yuos_tcb *task_create(int stack_size,uint32_t priority, void (*task_func)(void));
 void scheduler(void);

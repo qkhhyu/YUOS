@@ -67,6 +67,7 @@ static void MX_GPIO_Init(void);
 struct yuos_tcb tcb_pool[YUOS_MAX_TASKS];
 uint32_t stack_pool[YUOS_MAX_TASKS][STACK_SIZE];
 
+struct yuos_tcb *yuos_idle_tcb;
 struct yuos_tcb *taska_tcb, *taskb_tcb;
 struct yuos_tcb *current_tcb;
 
@@ -189,6 +190,13 @@ __attribute__((naked)) void start_first_task(void)
 
 /* USER CODE END 0 */
 
+void yuos_idle(void)
+{
+	while(1)
+	{
+
+	}
+}
 
 void taska(void)
 {
@@ -251,6 +259,7 @@ int main(void)
 
   /* USER CODE END 2 */
 
+  yuos_idle_tcb = task_create(STACK_SIZE,YUOS_PRIO_IDLE, yuos_idle);
   taska_tcb = task_create(STACK_SIZE,1, taska);
   taskb_tcb = task_create(STACK_SIZE,2, taskb);
 
