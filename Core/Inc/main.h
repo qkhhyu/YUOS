@@ -72,7 +72,7 @@ enum {
     TASK_BLOCKED    = 3,
 };
 
-#define YUOS_MAX_PRIORITIES  255u
+#define YUOS_MAX_PRIORITIES  256u
 #define YUOS_PRIO_HIGHEST   0u
 #define YUOS_PRIO_IDLE      (YUOS_MAX_PRIORITIES - 1u)
 

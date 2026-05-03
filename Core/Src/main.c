@@ -18,6 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include <stdint.h>
+
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -84,6 +86,8 @@ void exit_critical(uint32_t primask)
 	__set_PRIMASK(primask);                 // 恢复到旧状态
 }
 
+__attribute__((noreturn)) void task_exit_handler(void);
+
 /*
  * scheduler — 优先级调度
  */
@@ -133,7 +137,18 @@ void sleep(uint32_t ticks)
  */
 struct yuos_tcb *task_create(int stack_size,uint32_t priority, void (*task_func)(void))
 {
-    // uint32_t *sp = &stack[stack_size - 1];
+    if(task_func==NULL)
+	{
+		return NULL;
+	}
+	if(priority>=YUOS_MAX_PRIORITIES)
+	{
+		return NULL;
+	}
+	if(stack_size > STACK_SIZE)
+	{
+		return NULL;
+	}
 	struct yuos_tcb *tcb = NULL;
 	uint32_t *sp = NULL;
 	int slot = -1;
@@ -151,10 +166,12 @@ struct yuos_tcb *task_create(int stack_size,uint32_t priority, void (*task_func)
 		return NULL; // 没有空闲的 TCB
 	}
 	sp = &stack_pool[slot][stack_size];
+	sp = (uint32_t *)((uintptr_t)sp & ~(uintptr_t)0x7u);	// 8字节对齐
+	stack_pool[slot][0] = 0xDEADBEEF;
     /* 硬件异常返回帧 —— bx lr 时硬件自动弹出 */
     *(--sp) = 0x01000000;           /* xPSR: 必须置 Thumb 位 */
     *(--sp) = (uint32_t)task_func;  /* PC:  首次运行入口 */
-    *(--sp) = 0x00000000;           /* LR */
+    *(--sp) = (uint32_t)task_exit_handler;           /* LR */
     *(--sp) = 0x00000000;           /* R12 */
     *(--sp) = 0x00000000;           /* R3  */
     *(--sp) = 0x00000000;           /* R2  */
@@ -189,6 +206,15 @@ __attribute__((naked)) void start_first_task(void)
 }
 
 /* USER CODE END 0 */
+__attribute__((noreturn)) void task_exit_handler(void)
+  {
+      uint32_t primask = enter_critical();
+      current_tcb->state = TASK_UNUSED;  // 标记任务槽为空
+      exit_critical(primask);
+
+      SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  // 切走
+      while(1);  // 如果调度失败，死循环防飞
+  }
 
 void yuos_idle(void)
 {
