@@ -155,9 +155,14 @@ __attribute__((naked)) void SVC_Handler(void)
     __asm volatile (
         "ldr r0, =current_tcb    \n"
         "ldr r1, [r0]            \n"
-        "ldr sp, [r1]            \n"  /* SP = 第一个任务的栈指针 */
-        "pop {r4-r11}            \n"  /* 恢复 R4-R11 */
-        "bx lr                   \n"  /* 异常返回 → 硬件弹出 R0-R3,PC 等 → 任务启动 */
+        "ldr r0, [r1]            \n"  //r0 = current_tcb->sp
+        "ldmia r0!, {r4-r11}       \n"  //从任务栈弹出 R4-R11（ldmia：多寄存器加载，自动递增）
+        "msr psp, r0              \n"  //PSP = 任务栈当前指针
+        "mov r0,#2                \n"  //切换到 PSP 模式
+        "msr CONTROL, r0          \n"  //CONTROL[1]=1 切 PSP，CONTROL[0]=1 非特权
+        "isb                     \n"  //指令同步屏障，确保 CONTROL 寄存器修改生效
+        "ldr lr, =0xFFFFFFFD     \n"
+        "bx lr                   \n"  //异常返回 → 硬件弹出 R0-R3,PC 等 → 任务启动 EXC_RETURN 会自动选 PSP（因为 CONTROL=3）
     );
 }
 
@@ -189,18 +194,21 @@ void DebugMon_Handler(void)
 __attribute__((naked)) void PendSV_Handler(void)
 {
     __asm volatile (
-        "push {r4-r11}           \n"  /* 步骤2: 手动保存 R4-R11 */
-        "ldr r0, =current_tcb    \n"
-        "ldr r1, [r0]            \n"
-        "str sp, [r1]            \n"  /* 步骤3: SP → current_tcb->sp */
+        "mrs r0, psp"           "\n"  //步骤1: 获取当前任务栈顶地址（PSP
+        "stmdb r0!, {r4-r11}"   "\n"  //步骤2: 手动保存 R4-R11（stmdb：多寄存器存储，自动递减） 
+        "ldr r1, =current_tcb    \n"
+        "ldr r2, [r1]            \n"
+        "str r0, [r2]            \n"  //步骤3: SP → current_tcb->sp
         "mov r4, lr              \n"
-        "bl scheduler            \n"  /* 步骤4: 调用 C 调度器切换 current_tcb */
-        "mov lr, r4              \n"  /* 恢复 lr，防止 scheduler 修改它 */
-        "ldr r0, =current_tcb    \n"
-        "ldr r1, [r0]            \n"
-        "ldr sp, [r1]            \n"  /* 步骤5: 新任务 SP */
-        "pop {r4-r11}            \n"  /* 步骤6: 恢复 R4-R11 */
-        "bx lr                   \n"  /* 步骤7: 异常返回 */
+        "bl scheduler            \n"  //步骤4: 调用 C 调度器切换 current_tcb 
+        "mov lr, r4              \n"  //恢复 lr，防止 scheduler 修改它
+        "ldr r1, =current_tcb    \n"
+        "ldr r2, [r1]            \n"
+        "ldr r0, [r2]            \n"  //步骤5: 新任务 SP
+        "ldmia r0!, {r4-r11}     \n"  //步骤6: 恢复 R4-R11
+        "msr psp, r0             \n"  //更新 PSP
+        "isb                     \n"  //指令同步屏障，确保上下文切换完成
+        "bx lr                   \n"  //步骤7: 异常返回
     );
 }
 

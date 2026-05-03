@@ -145,7 +145,7 @@ struct yuos_tcb *task_create(int stack_size,uint32_t priority, void (*task_func)
 	{
 		return NULL; // 没有空闲的 TCB
 	}
-	sp = &stack_pool[slot][stack_size - 1];
+	sp = &stack_pool[slot][stack_size];
     /* 硬件异常返回帧 —— bx lr 时硬件自动弹出 */
     *(--sp) = 0x01000000;           /* xPSR: 必须置 Thumb 位 */
     *(--sp) = (uint32_t)task_func;  /* PC:  首次运行入口 */
