@@ -19,3 +19,6 @@ build/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Interview notes (private, not for GitHub)
+interview/

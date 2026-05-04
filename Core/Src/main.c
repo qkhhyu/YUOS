@@ -65,6 +65,7 @@ static void MX_GPIO_Init(void);
 
 
 /* 任务控制块 */
+struct yuos_kernel yuos_os={0};
 
 struct yuos_tcb tcb_pool[YUOS_MAX_TASKS];
 uint32_t stack_pool[YUOS_MAX_TASKS][STACK_SIZE];
@@ -72,6 +73,11 @@ uint32_t stack_pool[YUOS_MAX_TASKS][STACK_SIZE];
 struct yuos_tcb *yuos_idle_tcb;
 struct yuos_tcb *taska_tcb, *taskb_tcb;
 struct yuos_tcb *current_tcb;
+
+struct yuos_tcb *ready_list;
+struct yuos_tcb *delay_list;
+
+// void yuos_list_insert_by_priority()
 
 
 uint32_t enter_critical(void)
@@ -107,6 +113,10 @@ void scheduler(void)
 			{
 				next = &tcb_pool[i];
 			}
+			else if(tcb_pool[i].priority==next->priority && tcb_pool[i].last_tick < next->last_tick)
+			{
+				next = &tcb_pool[i];
+			}
 		}
 	}
 	uint32_t primask = enter_critical();
@@ -116,6 +126,8 @@ void scheduler(void)
 	}
 	current_tcb = next;
 	current_tcb->state = TASK_RUNNING;
+	current_tcb->last_tick = yuos_os.ticks;
+  current_tcb->time_slice = YUOS_TIME_SLICE;
 	exit_critical(primask);
 }
 
@@ -188,6 +200,7 @@ struct yuos_tcb *task_create(int stack_size,uint32_t priority, void (*task_func)
     tcb->priority = priority;
     tcb->state = TASK_READY;
     tcb->delay_ticks = 0;
+    tcb->time_slice = YUOS_TIME_SLICE;
 	return tcb;
 }
 
@@ -206,6 +219,13 @@ __attribute__((naked)) void start_first_task(void)
 }
 
 /* USER CODE END 0 */
+
+void task_yield(void)
+{
+	current_tcb->state = TASK_READY;  // 标记当前任务为就绪
+	SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  // 触发 PendSV 进行上下文切换
+}
+
 __attribute__((noreturn)) void task_exit_handler(void)
   {
       uint32_t primask = enter_critical();
