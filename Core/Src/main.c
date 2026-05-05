@@ -74,11 +74,137 @@ struct yuos_tcb *yuos_idle_tcb;
 struct yuos_tcb *taska_tcb, *taskb_tcb;
 struct yuos_tcb *current_tcb;
 
-struct yuos_tcb *ready_list;
-struct yuos_tcb *delay_list;
+struct yuos_tcb *ready_list;	//就绪队列
+struct yuos_tcb *delay_list;	//延时队列
 
-// void yuos_list_insert_by_priority()
+static void yuos_list_insert_by_priority(struct yuos_tcb *tcb, struct yuos_tcb **list_head)
+{
+	struct yuos_tcb *pos;
 
+	if (tcb == NULL || list_head == NULL)
+	{
+		return;
+	}
+
+	tcb->next = NULL;
+	tcb->prev = NULL;
+	if (*list_head == NULL)
+	{
+		*list_head = tcb;
+		return;
+	}
+
+	if (tcb->priority < (*list_head)->priority)
+	{
+		tcb->next = *list_head;
+		(*list_head)->prev = tcb;
+		*list_head = tcb;
+		return;
+	}
+
+	pos = *list_head;
+	while (pos->next && tcb->priority >= pos->next->priority)
+	{
+		pos = pos->next;
+	}
+
+	tcb->next = pos->next;
+	tcb->prev = pos;
+	pos->next = tcb;
+	if (tcb->next)
+	{
+		tcb->next->prev = tcb;
+	}
+}
+
+static void yuos_list_insert_by_delay(struct yuos_tcb *tcb, struct yuos_tcb **list_head)
+{
+	struct yuos_tcb *pos;
+
+	if (tcb == NULL || list_head == NULL)
+	{
+		return;
+	}
+
+	tcb->next = NULL;
+	tcb->prev = NULL;
+
+	if (*list_head == NULL)
+	{
+		*list_head = tcb;
+		return;
+	}
+
+	if (tcb->delay_ticks < (*list_head)->delay_ticks)
+	{
+		tcb->next = *list_head;
+		(*list_head)->prev = tcb;
+		*list_head = tcb;
+		return;
+	}
+
+	pos = *list_head;
+	while (pos->next && tcb->delay_ticks >= pos->next->delay_ticks)
+	{
+		pos = pos->next;
+	}
+
+	tcb->next = pos->next;
+	tcb->prev = pos;
+	pos->next = tcb;
+	if (tcb->next)
+	{
+		tcb->next->prev = tcb;
+	}
+}
+
+static void yuos_list_remove(struct yuos_tcb *tcb, struct yuos_tcb **list_head)
+{
+	if (tcb == NULL || list_head == NULL)
+	{
+		return;
+	}
+
+	if (tcb->prev == NULL && tcb->next == NULL && *list_head != tcb)
+	{
+		return;
+	}
+
+	if (tcb->prev)
+	{
+		tcb->prev->next = tcb->next;
+	}
+	else
+	{
+		*list_head = tcb->next;
+	}
+	if (tcb->next)
+	{
+		tcb->next->prev = tcb->prev;
+	}
+	tcb->next = NULL;
+	tcb->prev = NULL;
+}
+
+void yuos_ready_list_insert(struct yuos_tcb *tcb)
+{
+	yuos_list_insert_by_priority(tcb, &ready_list);
+}
+
+void yuos_delay_list_insert(struct yuos_tcb *tcb)
+{
+	yuos_list_insert_by_delay(tcb, &delay_list);
+}
+
+void yuos_ready_list_remove(struct yuos_tcb *tcb)
+{
+	yuos_list_remove(tcb, &ready_list);
+}
+
+void yuos_delay_list_remove(struct yuos_tcb *tcb)
+{
+	yuos_list_remove(tcb, &delay_list);
+}
 
 uint32_t enter_critical(void)
 {
@@ -99,44 +225,42 @@ __attribute__((noreturn)) void task_exit_handler(void);
  */
 void scheduler(void)
 {
-	struct yuos_tcb *next = current_tcb;  // 默认切换到当前任务（如果没有更高优先级的就绪任务）
-    // struct yuos_tcb *tasks[] = {&taska_tcb, &taskb_tcb};
-	for(int i = 0; i < sizeof(tcb_pool)/sizeof(tcb_pool[0]); i++) 
+	struct yuos_tcb *next = ready_list;	// 从就绪队列头开始找最高优先级的任务
+	if(next == NULL)
 	{
-		if(tcb_pool[i].state == TASK_UNUSED) 
-		{
-			continue;
-		}
-		if(tcb_pool[i].state == TASK_READY)
-		{
-			if(next->state != TASK_READY || tcb_pool[i].priority < next->priority) 
-			{
-				next = &tcb_pool[i];
-			}
-			else if(tcb_pool[i].priority==next->priority && tcb_pool[i].last_tick < next->last_tick)
-			{
-				next = &tcb_pool[i];
-			}
-		}
+		return; // 没有就绪任务，继续运行当前任务（可能是空闲任务）
 	}
+	yuos_ready_list_remove(next);	// 从就绪队列移除，准备切换到它
 	uint32_t primask = enter_critical();
 	if (current_tcb != next && current_tcb->state == TASK_RUNNING)
 	{
 		current_tcb->state = TASK_READY;
+		yuos_ready_list_insert(current_tcb);	// 当前任务重新入就绪队列
 	}
 	current_tcb = next;
 	current_tcb->state = TASK_RUNNING;
 	current_tcb->last_tick = yuos_os.ticks;
-  current_tcb->time_slice = YUOS_TIME_SLICE;
+  	current_tcb->time_slice = YUOS_TIME_SLICE;
 	exit_critical(primask);
 }
 
-void sleep(uint32_t ticks)
+void task_sleep(uint32_t ticks)
 {
 	uint32_t primask = enter_critical();
 	current_tcb->delay_ticks = ticks;
 	current_tcb->state = TASK_BLOCKED;
+	yuos_delay_list_insert(current_tcb);	// 插入到延时队列
 	SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  // 切换到其他任务
+	exit_critical(primask);
+	
+}
+
+void task_yield(void)
+{
+	uint32_t primask = enter_critical();
+	current_tcb->state = TASK_READY;  // 标记当前任务为就绪
+	yuos_ready_list_insert(current_tcb); // 重新插入就绪队列
+	SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  // 触发 PendSV 进行上下文切换
 	exit_critical(primask);
 }
 
@@ -201,6 +325,7 @@ struct yuos_tcb *task_create(int stack_size,uint32_t priority, void (*task_func)
     tcb->state = TASK_READY;
     tcb->delay_ticks = 0;
     tcb->time_slice = YUOS_TIME_SLICE;
+	yuos_ready_list_insert(tcb);	// 创建后直接进入就绪队列
 	return tcb;
 }
 
@@ -220,16 +345,13 @@ __attribute__((naked)) void start_first_task(void)
 
 /* USER CODE END 0 */
 
-void task_yield(void)
-{
-	current_tcb->state = TASK_READY;  // 标记当前任务为就绪
-	SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  // 触发 PendSV 进行上下文切换
-}
+
 
 __attribute__((noreturn)) void task_exit_handler(void)
   {
       uint32_t primask = enter_critical();
       current_tcb->state = TASK_UNUSED;  // 标记任务槽为空
+	  yuos_ready_list_remove(current_tcb);
       exit_critical(primask);
 
       SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  // 切走
@@ -255,7 +377,7 @@ void taska(void)
 			HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
 			for (volatile int i = 0; i < 500000; i++);
 		}
-		sleep(5000);
+		task_sleep(5000);
 		
 	}
 }

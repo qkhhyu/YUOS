@@ -245,23 +245,33 @@ void SysTick_Handler(void)
 		{
 			current_tcb->state = TASK_READY;	//时间片用完
 			current_tcb->time_slice = YUOS_TIME_SLICE;		//重置时间
+			yuos_ready_list_insert(current_tcb);
 			SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
 		}
 		
 	}
-	for(uint32_t i = 0; i < sizeof(tcb_pool)/sizeof(tcb_pool[0]); i++) 
+	struct yuos_tcb *next = delay_list;
+	struct yuos_tcb *pos = NULL;
+	
+	// for(uint32_t i = 0; i < sizeof(tcb_pool)/sizeof(tcb_pool[0]); i++) 
+	while(next)
 	{
-		if (tcb_pool[i].state == TASK_BLOCKED) 
+		pos = next;
+		next = next->next;  // 移动到下一个任务
+		if (pos->state == TASK_BLOCKED) 
 		{
 			uint32_t primask = enter_critical();
-			tcb_pool[i].delay_ticks--;
-			if(tcb_pool[i].delay_ticks ==0)
+			pos->delay_ticks--;
+			if(pos->delay_ticks ==0)
 			{
-				tcb_pool[i].state = TASK_READY;
+				pos->state = TASK_READY;
+				yuos_delay_list_remove(pos);	// 从延时队列移除
+				yuos_ready_list_insert(pos);	// 插入到就绪队列
 				SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
 			}
 			exit_critical(primask);
 		}
+		
 	}
 
 

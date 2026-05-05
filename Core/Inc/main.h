@@ -116,6 +116,10 @@ extern struct yuos_tcb *delay_list;
 struct yuos_tcb *task_create(int stack_size,uint32_t priority, void (*task_func)(void));
 void scheduler(void);
 void start_first_task(void);
+void yuos_ready_list_insert(struct yuos_tcb *tcb);
+void yuos_delay_list_insert(struct yuos_tcb *tcb);
+void yuos_ready_list_remove(struct yuos_tcb *tcb);
+void yuos_delay_list_remove(struct yuos_tcb *tcb);
 
 uint32_t enter_critical(void);
 void exit_critical(uint32_t primask);
