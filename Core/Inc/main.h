@@ -99,6 +99,12 @@ struct yuos_kernel
     uint32_t ticks; // 系统运行的总 tick 数
 };
 
+struct yuos_sem
+{
+    uint32_t count; // 信号量计数
+    struct yuos_tcb *wait_list; // 等待该信号量的任务队列
+};
+
 
 /* Exported kernel variables -------------------------------------------------*/
 // extern uint32_t taska_stack[STACK_SIZE];
@@ -114,12 +120,17 @@ extern struct yuos_tcb *ready_list;
 extern struct yuos_tcb *delay_list;
 /* Exported kernel functions -------------------------------------------------*/
 struct yuos_tcb *task_create(int stack_size,uint32_t priority, void (*task_func)(void));
-void scheduler(void);
+void yuos_scheduler(void);
 void start_first_task(void);
+
 void yuos_ready_list_insert(struct yuos_tcb *tcb);
 void yuos_delay_list_insert(struct yuos_tcb *tcb);
 void yuos_ready_list_remove(struct yuos_tcb *tcb);
 void yuos_delay_list_remove(struct yuos_tcb *tcb);
+
+void yuos_sem_init(struct yuos_sem *sem, uint32_t initial_count);
+void yuos_sem_wait(struct yuos_sem *sem);
+void yuos_sem_post(struct yuos_sem *sem);
 
 uint32_t enter_critical(void);
 void exit_critical(uint32_t primask);

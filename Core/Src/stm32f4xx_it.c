@@ -45,7 +45,7 @@
 
 // extern struct yuos_tcb taska_tcb, taskb_tcb;
 // extern struct yuos_tcb *current_tcb;
-extern void scheduler(void);
+extern void yuos_scheduler(void);
 
 /* USER CODE END PV */
 
@@ -200,7 +200,7 @@ __attribute__((naked)) void PendSV_Handler(void)
 				"ldr r2, [r1]            \n"
 				"str r0, [r2]            \n"  //步骤3: SP → current_tcb->sp
 				"mov r4, lr              \n"
-				"bl scheduler            \n"  //步骤4: 调用 C 调度器切换 current_tcb 
+				"bl yuos_scheduler            \n"  //步骤4: 调用 C 调度器切换 current_tcb 
 				"mov lr, r4              \n"  //恢复 lr，防止 scheduler 修改它
 				"ldr r1, =current_tcb    \n"
 				"ldr r2, [r1]            \n"

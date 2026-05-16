@@ -77,6 +77,68 @@ struct yuos_tcb *current_tcb;
 struct yuos_tcb *ready_list;	//就绪队列
 struct yuos_tcb *delay_list;	//延时队列
 
+static void sem_wait_list_insert(struct yuos_sem *sem,struct yuos_tcb *tcb)
+{
+	struct yuos_tcb *pos = NULL;
+	tcb->next = NULL;
+	tcb->prev = NULL;
+	if(sem->wait_list==NULL)
+	{
+		sem->wait_list = tcb;
+		tcb->next = NULL;
+	}
+	else
+	{
+		pos = sem->wait_list;
+		while(pos->next)
+		{
+			pos = pos->next;
+		}
+		pos->next = tcb;
+		tcb->next = NULL;
+	}
+}
+
+void yuos_sem_post(struct yuos_sem *sem)
+{
+	struct yuos_tcb *tcb = NULL;
+	if(sem->wait_list)
+	{
+		tcb = sem->wait_list;
+		tcb->state = TASK_READY;
+		yuos_delay_list_remove(tcb);	// 从等待队列移除
+		yuos_ready_list_insert(tcb);	// 插入到就绪队列
+		SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  // 切换到其他任务
+	}
+	else
+	{
+		sem->count++;
+	}
+}
+
+void yuos_sem_wait(struct yuos_sem *sem)
+{
+	struct yuos_tcb *tcb = current_tcb;
+	if(sem->count>0)
+	{
+		sem->count--;
+	}
+	else
+	{
+		tcb->state = TASK_BLOCKED;
+		yuos_ready_list_remove(tcb);	// 从就绪队列移除
+		yuos_delay_list_insert(tcb);	// 插入到等待队列
+		SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;  // 切换到其他任务
+	}
+}
+
+void yuos_sem_init(struct yuos_sem *sem, uint32_t count)
+{
+	sem->count = count;
+	sem->wait_list = NULL;
+}
+
+
 static void yuos_list_insert_by_priority(struct yuos_tcb *tcb, struct yuos_tcb **list_head)
 {
 	struct yuos_tcb *pos;
@@ -223,7 +285,7 @@ __attribute__((noreturn)) void task_exit_handler(void);
 /*
  * scheduler — 优先级调度
  */
-void scheduler(void)
+void yuos_scheduler(void)
 {
 	struct yuos_tcb *next = ready_list;	// 从就绪队列头开始找最高优先级的任务
 	if(next == NULL)
